@@ -5,10 +5,15 @@
 #include "EasyCandleProtocol.mqh"
 #include "EasyCandleWs.mqh"
 
+#define EASY_CANDLE_HISTORY_MIN     15000
+#define EASY_CANDLE_HISTORY_MAX     500000
+#define EASY_CANDLE_HISTORY_DEFAULT 100000
+#define EASY_CANDLE_CHUNK_MIN       2000
+#define EASY_CANDLE_CHUNK_MAX       5000
+
 input string InpHost        = "127.0.0.1";
 input int    InpPort        = 17321;
-input int    InpHistoryBars = 20000;
-input int    InpChunkBars   = 2000;
+input int    InpHistoryBars = EASY_CANDLE_HISTORY_DEFAULT; // M1 candles to send (15000–500000)
 input int    InpPingSec     = 15;
 input int    InpReconnectMs = 2000;
 
@@ -17,8 +22,8 @@ bool          g_m1_ok = false;
 bool          g_live = false;
 string        g_symbol = "";
 int           g_digits = 5;
-int           g_history_bars = 20000;
-int           g_chunk_bars = 2000;
+int           g_history_bars = EASY_CANDLE_HISTORY_DEFAULT;
+int           g_chunk_bars = EASY_CANDLE_CHUNK_MIN;
 int           g_ping_sec = 15;
 int           g_reconnect_ms = 2000;
 uint          g_last_connect_try = 0;
@@ -27,6 +32,27 @@ uint          g_last_bar_ms = 0;
 long          g_last_bar_t = 0;
 
 void EasyCandleTryLiveBar(void);
+
+int EasyCandleClampHistoryBars(const int requested)
+  {
+   if(requested < EASY_CANDLE_HISTORY_MIN)
+      return EASY_CANDLE_HISTORY_MIN;
+   if(requested > EASY_CANDLE_HISTORY_MAX)
+      return EASY_CANDLE_HISTORY_MAX;
+   return requested;
+  }
+
+// ~10 chunks per dump, bounded so each JSON frame stays modest (and under
+// Easy Candle's 20,000-bar per-message cap).
+int EasyCandleChunkBarsFor(const int history_bars)
+  {
+   int chunk = history_bars / 10;
+   if(chunk < EASY_CANDLE_CHUNK_MIN)
+      chunk = EASY_CANDLE_CHUNK_MIN;
+   if(chunk > EASY_CANDLE_CHUNK_MAX)
+      chunk = EASY_CANDLE_CHUNK_MAX;
+   return chunk;
+  }
 
 long EasyCandleUtcAdjust(void)
   {
@@ -69,11 +95,7 @@ bool EasyCandleIsForming(const MqlRates &bar)
 
 bool EasyCandleSendHistory(void)
   {
-   int want = g_history_bars;
-   if(want < 1)
-      want = 1;
-   if(want > 20000)
-      want = 20000;
+   const int want = g_history_bars;
 
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
@@ -233,17 +255,16 @@ int OnInit()
   {
    MathSrand((int)GetTickCount());
 
-   g_history_bars = InpHistoryBars;
-   if(g_history_bars < 1)
-      g_history_bars = 1;
-   if(g_history_bars > 20000)
-      g_history_bars = 20000;
+   g_history_bars = EasyCandleClampHistoryBars(InpHistoryBars);
+   if(g_history_bars != InpHistoryBars)
+      Print("EasyCandle: InpHistoryBars ", InpHistoryBars,
+            " clamped to ", g_history_bars,
+            " (min ", EASY_CANDLE_HISTORY_MIN,
+            ", max ", EASY_CANDLE_HISTORY_MAX, ")");
 
-   g_chunk_bars = InpChunkBars;
-   if(g_chunk_bars < 1)
-      g_chunk_bars = 1;
-   if(g_chunk_bars > 20000)
-      g_chunk_bars = 20000;
+   g_chunk_bars = EasyCandleChunkBarsFor(g_history_bars);
+   Print("EasyCandle: will request ", g_history_bars,
+         " M1 bars in chunks of ", g_chunk_bars);
 
    g_ping_sec = InpPingSec;
    if(g_ping_sec < 1)
