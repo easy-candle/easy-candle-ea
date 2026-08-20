@@ -22,7 +22,7 @@ Target: **MetaTrader 5** (MQL5). MT4 is possible with a socket DLL, but MQL5 soc
 | Timeframe | **M1 only** for `history` and `bar` |
 | Time | Unix **seconds** UTC (or ms; values `> 1e12` are treated as ms) |
 | Symbol | `A–Z`, `0–9`, `.`, `_`, max 32 chars, case-insensitive (stored uppercased) |
-| History cap | Easy Candle keeps the **last 20,000** bars after merge |
+| History cap | Easy Candle keeps merged bars; each `history` frame is parsed with a **20,000**-bar per-message cap |
 | Import minimum | User cannot confirm import with fewer than **14,400** M1 bars (~10 days of continuous minutes) |
 
 MQL5 has TCP sockets (`SocketCreate` / `SocketConnect`), **not** a WebSocket API. Implement the WebSocket handshake yourself (or use a small helper). Send **text frames**, not binary.
@@ -45,11 +45,12 @@ MQL5 has TCP sockets (`SocketCreate` / `SocketConnect`), **not** a WebSocket API
 ```
 InpHost        = "127.0.0.1"
 InpPort        = 17321
-InpHistoryBars = 20000     // request up to this many M1 bars (Easy Candle caps at 20_000)
-InpChunkBars   = 2000      // bars per history message (avoid huge JSON strings)
+InpHistoryBars = 100000    // M1 bars to request (clamped 15,000–500,000)
 InpPingSec     = 15
 InpReconnectMs = 2000
 ```
+
+Chunk size is **not** an input. The EA splits the dump into about 10 chunks, each clamped to **2,000–5,000** bars so JSON frames stay under Easy Candle’s 20,000-bar per-message cap.
 
 **Attach rules**
 
@@ -156,7 +157,7 @@ Required on all messages:
 2. Skip index `0` if that bar is still forming (send it later via `bar`).
 3. Convert `rates[i].time` from broker/server time to **UTC unix seconds**.
 4. Sort oldest → newest.
-5. Split into chunks of `InpChunkBars`. Each chunk is its **own** `history` message. Easy Candle **merges by open time**.
+5. Split into chunks of 2,000–5,000 bars (`history / 10`, then clamped). Each chunk is its **own** `history` message. Easy Candle **merges by open time**.
 6. Prefer sending **oldest chunks first**.
 
 Target **at least 14,400 closed M1 bars** so the user can confirm import. If the broker has fewer, send what exists; Easy Candle preview will show them, confirm will refuse until the minimum is met.
@@ -252,7 +253,7 @@ One EA instance = one symbol. To import another symbol, attach another chart/EA 
 - [ ] Refuse to run unless `Period() == PERIOD_M1`
 - [ ] `hello` immediately after connect
 - [ ] `CopyRates` M1, UTC open times, skip forming bar
-- [ ] Chunked `history` (≤ 2000 bars/message, ≤ 20,000 total)
+- [ ] Chunked `history` (2,000–5,000 bars/message; 15,000–500,000 total, default 100,000)
 - [ ] Aim for ≥ 14,400 bars when the broker has them
 - [ ] Live `bar` on forming candle + new minute
 - [ ] `ping` on a timer
